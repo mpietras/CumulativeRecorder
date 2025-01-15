@@ -1,0 +1,319 @@
+<html>
+<head>
+    <title>Cumulative Recorder
+    </title>
+    <style>
+        body {
+            padding: 0;
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+    </style>
+    <script>
+
+        var canvas = null;
+        var ctx = null;
+        var timer = null;
+        var timer_ms = 200;
+        var time = 0;
+
+        var key_state = []; // element is true if key is currently down
+
+        var pen_steps = 100;
+        var pen_loc = 0;    // 0-(pen_steps-1)
+        var pen_loc_array = []; // we will negate a value if we want a marker
+        var pen_marker = false;
+        var marker_total = 0;
+        var response_total = 0;
+        var toggle_loc = 0;    // 0 or 5
+        var toggle_val = 10;
+        var toggle_loc_array = [];
+
+        var imageResources = 0;
+        function imageResourceComplete() {
+            if (!--imageResources) {
+                timer = setInterval(scrollPaper, timer_ms);
+                redraw();
+            }
+        }
+
+        /**
+         * @constructor
+         */
+        function ImageResource(name) {
+            imageResources++;
+            this.img = new Image();
+            this.img.load_results = 0;
+            this.img.onload = function () {
+                this.load_results = true;
+                imageResourceComplete();
+            }
+            this.img.onerror = function () {
+                this.load_results = false;
+                imageResourceComplete();
+            }
+            this.img.src = name;
+            this.loaded = function () {
+                return this.img.load_results;
+            }
+            return this;
+        }
+
+        var imgResMachine = new ImageResource("machine.jpg");
+        var imgResArm = new ImageResource("arm.png");
+        var imgResWood = new ImageResource("wood.jpg");
+
+        function doLayout() {
+            var windowWidth = document.documentElement.clientWidth;
+            var windowHeight = document.documentElement.clientHeight;
+            canvas.width = windowWidth;
+            canvas.height = windowHeight;
+            canvas.style.width = windowWidth + 'px';
+            canvas.style.height = windowHeight + 'px';
+            redraw();
+        }
+
+        function sec2time(seconds) {
+            var hms = '';
+
+            seconds = Math.floor(seconds);
+            var minutes = Math.floor(seconds / 60);
+            var hours = Math.floor(minutes / 60);
+            seconds -= minutes * 60;
+            minutes -= hours * 60;
+
+            if (hours > 0) {
+                hms += hours;
+                hms += ':';
+            }
+
+            if (minutes < 10) {
+                hms += '0';
+            }
+            hms += minutes;
+            hms += ':';
+
+            if (seconds < 10) {
+                hms += '0';
+            }
+            hms += seconds;
+
+            return hms;
+        }
+
+        function scrollPaper() {
+            time++;
+            if (pen_loc_array.length == 2000) {
+                pen_loc_array.pop();
+                toggle_loc_array.pop();
+            }
+            pen_loc_array.push(pen_marker ? pen_loc - pen_steps : pen_loc);
+            pen_marker = false;
+            toggle_loc_array.push(toggle_loc);
+            redraw();
+        }
+
+        function redraw() {
+            if (!ctx) {
+                return;
+            }
+
+            ctx.save();
+
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (imgResMachine.loaded() && imgResArm.loaded()) {
+                // find the fill height and get proportion width
+                var scale = canvas.height / imgResMachine.img.height;
+                var mw = imgResMachine.img.width * scale;
+                var paper_w = canvas.width - mw;
+
+                // the table will start at y=31 and go to the y=208
+                // it starts again at y=771 and goes to y=896
+                if (imgResWood.loaded()) {
+                    var y0 = 31 * scale;
+                    var y1 = 209 * scale;
+                    var y2 = 771 * scale;
+                    var y3 = 895 * scale;
+
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.rect(0, y0, paper_w, y1 - y0);
+                    ctx.rect(0, y2, paper_w, y3 - y2);
+                    ctx.clip();
+
+                    for (var x = 0; x < paper_w; x += imgResWood.img.width) {
+                        for (var y = y0; y <= y3; y += imgResWood.img.height) {
+                            ctx.drawImage(imgResWood.img, x, y);
+                        }
+                    }
+
+                    ctx.restore();
+                }
+
+                // draw the machine itself
+                ctx.drawImage(imgResMachine.img, paper_w, 0, mw, canvas.height);
+
+                // the pen image unscaled location is at x=47 y=142-584 (442) which puts the actual pen at 53,264
+                // so adjust according to scale and pen location
+                ctx.drawImage(imgResArm.img, paper_w + 47 * scale, (142 + 442 - 442 * pen_loc / (pen_steps - 1)) * scale, imgResArm.img.width * scale, imgResArm.img.height * scale);
+
+                // now draw the cumulative graph itself... the paper will start at x=0 and goto paper_w, y=209 and end at y=770 (561)
+                ctx.beginPath();
+                var x = paper_w + 58 * scale;
+                ctx.moveTo(x, (264 + 442 - 442 * pen_loc / (pen_steps - 1)) * scale);
+                for (var i = pen_loc_array.length - 2; i >= 0; i--) {
+                    x--;
+                    var marker = false;
+                    var l = pen_loc_array[i];
+                    if (l < 0) {
+                        // marker here
+                        l += pen_steps;
+                        marker = true;
+                    }
+                    var y = (264 + 442 - 442 * l / (pen_steps - 1));
+                    ctx.lineTo(x, y * scale);
+                    if (marker) {
+                        y += 20;
+                        ctx.lineTo(x, y * scale);
+                        y -= 20;
+                        ctx.lineTo(x, y * scale);
+                    }
+                }
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = "#000000";
+                ctx.fillStyle = null;
+                ctx.stroke();
+
+                // now draw the toggle graph itself... the paper will start at x=0 and goto paper_w, y=738
+                ctx.beginPath();
+                var x = paper_w + 58 * scale;
+                ctx.moveTo(x, (738 - toggle_loc) * scale);
+                for (var i = toggle_loc_array.length - 2; i >= 0; i--) {
+                    x--;
+                    ctx.lineTo(x, (738 - toggle_loc_array[i]) * scale);
+                }
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = "#000000";
+                ctx.fillStyle = null;
+                ctx.stroke();
+            }
+
+            // put a title text at the top
+            ctx.textBaseline = "top";
+            ctx.font = '' + (31 * scale) + 'px Arial';
+            ctx.fillStyle = "#000000";
+            ctx.fillText("Cumulative Recorder", 0, 0);
+
+            // drop some help text at the bottom
+            ctx.font = '' + (16 * scale) + 'px Arial';
+            ctx.fillStyle = "#000000";
+            ctx.fillText("click/SPACE/UP/r=response(" + response_total + ")   ENTER/e=event-pin(" + (toggle_loc ? "on" : "off") + ")   m=marker(" + marker_total + ")   p=pause/resume(" + (timer ? "running" : "paused") + " " + sec2time(time/4) + ")   ESC=reset   DEL=reset+erase", 0, 896 * scale);
+
+            ctx.restore();
+        }
+
+        window.onload = function () {
+            canvas = document.getElementById('main_canvas');
+            ctx = canvas.getContext('2d');
+            doLayout();
+        }
+
+        window.onresize = function () {
+            doLayout();
+        }
+
+        window.onmousedown = function (e) {
+            // response: up or space or r
+            response_total++;
+            if (++pen_loc == pen_steps) {
+                // resets back to bottom
+                pen_loc = 0;
+            }
+        }
+
+        window.onkeyup = function (e) {
+            e = e || window.event;
+            var code = e.charCode ? e.charCode : e.keyCode;
+            key_state[code] = false;
+        }
+
+        window.onkeydown = function (e) {
+            e = e || window.event;
+            var code = e.charCode ? e.charCode : e.keyCode;
+            if (code in key_state && key_state[code]) {
+                // already down
+                return;
+            }
+            key_state[code] = true;
+
+            if (code == 80 || code == 19) {
+                // handle pause toggle, p or pause key
+                if (timer) {
+                    clearInterval(timer);
+                    timer = null;
+
+                    // redraw
+                    redraw();
+                }
+                else {
+                    timer = setInterval(scrollPaper, timer_ms);
+                }
+            }
+            else if (code == 38 || code == 32 || code == 82) {
+                // response: up or space or r
+                response_total++;
+                if (++pen_loc == pen_steps) {
+                    // resets back to bottom
+                    pen_loc = 0;
+                }
+            }
+            else if (code == 40 || code == 8) {
+                // down or back space
+                if (pen_loc > 0) {
+                    pen_loc--;
+                }
+            }
+            else if (code == 27) {
+                // reset: esc
+                pen_marker = false;
+                pen_loc = 0;
+                toggle_loc = 0;
+
+                // redraw
+                redraw();
+            }
+            else if (code == 46) {
+                // erase: delete
+                time = 0;
+                response_total = 0;
+                marker_total = 0;
+                pen_marker = false;
+                pen_loc = 0;
+                pen_loc_array = [];
+                toggle_loc = 0;
+                toggle_loc_array = [];
+
+                // redraw
+                redraw();
+            }
+            else if (code == 69 || code == 13) {
+                // event: e or enter
+                toggle_loc = toggle_val - toggle_loc;
+            }
+            else if (code == 77) {
+                // marker: m
+                pen_marker = true;
+                marker_total++;
+            }
+        }
+
+    </script>
+</head>
+<body style="overflow-x: hidden; overflow-y: hidden; background-color: #fff;">
+    <canvas id="main_canvas" />
+</body>
+</html>
